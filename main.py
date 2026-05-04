@@ -16,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GEMINI_API_KEY = os.environ.get("G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")
+GEMINI_API_KEY = os.environ.get("AIzaSyDDuF5AoJHk6Zn4lF5thZSSu8iydb9oqyo")
 
 SYSTEM_PROMPT = """Сен — EduBot, Astana IT University колледжінің интеллектті оқу ассистентісің.
 Сен студенттерге мына модульдер бойынша көмек бересің:
