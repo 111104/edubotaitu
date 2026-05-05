@@ -1,45 +1,36 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 import os
 import httpx
+import uvicorn
 
 app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-GEMINI_API_KEY = os.environ.get("AIzaSyDDuF5AoJHk6Zn4lF5thZSSu8iydb9oqyo")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 SYSTEM_PROMPT = """Сен — EduBot, Astana IT University колледжінің интеллектті оқу ассистентісің.
 Сен студенттерге мына модульдер бойынша көмек бересің:
-• КМ03 / ПМ03 — Бағдарламалық қамтамасыз ету модульдерін бағдарламалау
-• КМ04 / ПМ04 — Web-сайтты жобалау және үздіксіз жұмыс істеуін қамтамасыз ету
-• КМ05 / ПМ05 — Бағдарламалық кодтың жұмыс жасау рефакторингін тексеру
-• КМ06 — Микроконтроллер негізінде сандық құрылғыларды бағдарламалау
-• КМ07 — Мобильді қосымшаларды әзірлеу
+• КМ03/ПМ03 — Бағдарламалау
+• КМ04/ПМ04 — Web-сайт
+• КМ05/ПМ05 — Рефакторинг кода
+• КМ06 — Микроконтроллер
+• КМ07 — Мобильді қосымшалар
 
-ТІЛІҢДІ АНЫҚТА: Студент қай тілде жазса, сол тілде жауап бер (қазақша, орысша немесе ағылшынша).
-
-ПЕДАГОГИКАЛЫҚ СТИЛЬ:
-- Дайын жауапты бірден берме — алдымен бағыттаушы сұрақ қой
-- Студент қате жасаса — "қате" деме, "ал мынадай жағдайда не болады?" деп сұра
-- Тьютор рөлін атқар: бағыттай, түсіндір, тексер
-- Жауаптың соңында студентке кері сұрақ қой"""
+Студент қай тілде жазса, сол тілде жауап бер.
+Тьютор рөлін атқар: дайын жауап берме, бағыттаушы сұрақ қой.
+Жауаптың соңында тексеру сұрағын қой."""
 
 MODULE_CONTEXTS = {
-    "km03": "Қазір КМ03/ПМ03: бағдарламалау (Python/Java, алгоритмдер).",
-    "km04": "Қазір КМ04/ПМ04: Web-сайт (HTML, CSS, JavaScript).",
-    "km05": "Қазір КМ05/ПМ05: рефакторинг (код сапасы, тестілеу).",
-    "km06": "Қазір КМ06: микроконтроллер (Arduino, C/C++).",
-    "km07": "Қазір КМ07: мобильді қосымшалар (Flutter/React Native).",
+    "km03": "Қазір КМ03/ПМ03: бағдарламалау (Python/Java).",
+    "km04": "Қазір КМ04/ПМ04: Web-сайт (HTML, CSS, JS).",
+    "km05": "Қазір КМ05/ПМ05: рефакторинг, тестілеу.",
+    "km06": "Қазір КМ06: микроконтроллер, Arduino.",
+    "km07": "Қазір КМ07: мобильді қосымшалар, Flutter.",
 }
 
 class Message(BaseModel):
@@ -50,11 +41,13 @@ class ChatRequest(BaseModel):
     messages: List[Message]
     module: str = "auto"
 
-app.mount("/static", StaticFiles(directory="."), name="static")
-
 @app.get("/")
 def root():
     return FileResponse("index.html")
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "gemini_key": bool(GEMINI_API_KEY)}
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
@@ -64,7 +57,6 @@ async def chat(req: ChatRequest):
     module_ctx = MODULE_CONTEXTS.get(req.module, "")
     system = SYSTEM_PROMPT + ("\n\n" + module_ctx if module_ctx else "")
 
-    # Gemini форматына аудару
     contents = []
     for m in req.messages:
         role = "user" if m.role == "user" else "model"
@@ -73,22 +65,24 @@ async def chat(req: ChatRequest):
     payload = {
         "system_instruction": {"parts": [{"text": system}]},
         "contents": contents,
-        "generationConfig": {"maxOutputTokens": 1024}
+        "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.7}
     }
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=payload, timeout=30)
-        data = response.json()
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(url, json=payload)
 
+    if response.status_code != 200:
+        return {"error": f"Gemini қате: {response.status_code} — {response.text}"}
+
+    data = response.json()
     try:
         text = data["candidates"][0]["content"]["parts"][0]["text"]
         return {"response": text}
     except Exception:
-        return {"error": str(data)}
+        return {"error": f"Жауап форматы қате: {data}"}
 
 if __name__ == "__main__":
-    import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
